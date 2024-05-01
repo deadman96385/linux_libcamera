@@ -264,7 +264,7 @@ static const SimplePipelineInfo supportedDevices[] = {
 	{ "mtk-seninf", { { "mtk-mdp", 3 } }, false },
 	{ "mxc-isi", {}, false },
 	{ "qcom-camss", {}, true },
-	{ "sun6i-csi", {}, false },
+	{ "sun6i-csi", {}, true },
 };
 
 bool isRaw(const StreamConfiguration &cfg)
