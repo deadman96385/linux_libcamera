@@ -745,9 +745,7 @@ void SimpleCameraData::tryPipeline(unsigned int code, const Size &size)
 			config.outputFormats = swIsp_->formats(pixelFormat);
 			config.outputSizes = swIsp_->sizes(pixelFormat, format.size);
 			if (config.outputFormats.empty()) {
-				/* Do not use swIsp for unsupported pixelFormat's. */
-				config.outputFormats = { pixelFormat };
-				config.outputSizes = config.captureSize;
+				continue;
 			}
 		} else {
 			config.outputFormats = { pixelFormat };
