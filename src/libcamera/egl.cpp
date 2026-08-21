@@ -282,7 +282,7 @@ int eGL::createOutputDMABufTexture2D(eGLImage &eglImage, int fd)
  * is useful for uploading static data like lookup tables or uniform color
  * matrices to the GPU.
  */
-void eGL::createTexture2D(eGLImage &eglImage, void *data, GLint filter)
+void eGL::createTexture2D(eGLImage &eglImage, const void *data, GLint filter)
 {
 	ASSERT(tid_ == Thread::currentId());
 
@@ -351,7 +351,7 @@ bool eGL::isAvailable()
  *
  * Updates a 2D texture in VRAM.
  */
-void eGL::updateTexture2D(eGLImage &eglImage, void *data)
+void eGL::updateTexture2D(eGLImage &eglImage, const void *data)
 {
 	ASSERT(tid_ == Thread::currentId());
 
