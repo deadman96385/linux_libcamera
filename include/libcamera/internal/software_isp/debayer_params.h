@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <array>
 #include <stdint.h>
 
 #include "libcamera/internal/matrix.h"
@@ -25,6 +26,17 @@ struct DebayerParams {
 	float gamma = 1.0;
 	float contrastExp = 1.0;
 	RGB<float> gains = RGB<float>({ 1.0, 1.0, 1.0 });
+
+	/**
+	 * To prevent OpenGL alignment issues, the number of bytes in each row
+	 * should be a multiple of 4.
+	 **/
+	static constexpr unsigned int kLscGridSize = 17;
+	static constexpr unsigned int kLscValuesPerCell = 4;
+	using LscLookupTable =
+		std::array<uint8_t, kLscGridSize * kLscGridSize * kLscValuesPerCell>;
+	LscLookupTable lscLut{};
+	uint64_t lscLutVersion = 0;
 };
 
 } /* namespace libcamera */
