@@ -656,7 +656,11 @@ int SimpleCameraData::init()
 	/*
 	 * Instantiate Soft ISP if this is enabled for the given driver and no converter is used.
 	 */
-	if (!converter_ && pipe->swIspEnabled()) {
+	const ControlInfoMap &sensorControls = sensor_->controls();
+	const bool supportsSwIspControls =
+		sensorControls.find(V4L2_CID_EXPOSURE) != sensorControls.end() &&
+		sensorControls.find(V4L2_CID_ANALOGUE_GAIN) != sensorControls.end();
+	if (!converter_ && pipe->swIspEnabled() && supportsSwIspControls) {
 		swIsp_ = std::make_unique<SoftwareIsp>(pipe, sensor_.get(), &controlInfo_);
 		if (!swIsp_->isValid()) {
 			LOG(SimplePipeline, Warning)
@@ -699,7 +703,8 @@ int SimpleCameraData::init()
 			for (const auto &[id, info] : controlInfo_)
 				cameraControls[id] = info;
 			cameraControls[&controls::AfMode] =
-				ControlInfo(controls::AfModeValues);
+				ControlInfo(controls::AfModeValues,
+					    controls::AfModeContinuous);
 			cameraControls[&controls::AfTrigger] =
 				ControlInfo(controls::AfTriggerValues);
 			cameraControls[&controls::LensPosition] =
