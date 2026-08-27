@@ -174,10 +174,14 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
 #define SWSTATS_START_LINE_STATS(pixel_t) \
 	pixel_t r, g, g2, b;              \
 	uint64_t yVal;                    \
+	uint64_t previousY = 0;           \
+	bool havePreviousY = false;       \
                                           \
 	uint64_t sumR = 0;                \
 	uint64_t sumG = 0;                \
-	uint64_t sumB = 0;
+	uint64_t sumB = 0;                \
+	uint64_t focusGradient = 0;       \
+	uint64_t focusLuminance = 0;
 
 #define SWSTATS_ACCUMULATE_LINE_STATS(div) \
 	sumR += r;                         \
@@ -187,12 +191,22 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
 	yVal = r * kRedYMul;               \
 	yVal += g * kGreenYMul;            \
 	yVal += b * kBlueYMul;             \
-	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++;
+	const uint64_t normalizedY = yVal / (256 * (div)); \
+	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++; \
+	focusLuminance += normalizedY;      \
+	if (havePreviousY)                  \
+		focusGradient += normalizedY > previousY \
+				 ? normalizedY - previousY \
+				 : previousY - normalizedY; \
+	previousY = normalizedY;            \
+	havePreviousY = true;
 
 #define SWSTATS_FINISH_LINE_STATS() \
 	stats.sum_.r() += sumR;     \
 	stats.sum_.g() += sumG;     \
-	stats.sum_.b() += sumB;
+	stats.sum_.b() += sumB;     \
+	stats.focusGradient += focusGradient; \
+	stats.focusLuminance += focusLuminance;
 
 void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[], SwIspStats &stats)
 {
@@ -392,6 +406,8 @@ void SwStatsCpu::startFrame(uint32_t frame)
 	for (auto &s : stats_) {
 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
 		s.yHistogram.fill(0);
+		s.focusGradient = 0;
+		s.focusLuminance = 0;
 	}
 }
 
@@ -409,10 +425,14 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
 	if (valid) {
 		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
 		sharedStats_->yHistogram.fill(0);
+		sharedStats_->focusGradient = 0;
+		sharedStats_->focusLuminance = 0;
 		for (const auto &s : stats_) {
 			sharedStats_->sum_ += s.sum_;
 			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
 				sharedStats_->yHistogram[j] += s.yHistogram[j];
+			sharedStats_->focusGradient += s.focusGradient;
+			sharedStats_->focusLuminance += s.focusLuminance;
 		}
 
 		sharedStats_->sum_ >>= sumShift_;

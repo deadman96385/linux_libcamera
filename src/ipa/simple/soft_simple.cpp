@@ -182,9 +182,6 @@ int IPASoftSimple::init(const IPASettings &settings,
 		stats_ = static_cast<SwIspStats *>(mem);
 	}
 
-	ControlInfoMap::Map ctrlMap = context_.ctrlMap;
-	*ipaControls = ControlInfoMap(std::move(ctrlMap), controls::controls);
-
 	/*
 	 * Check if the sensor driver supports the controls required by the
 	 * Soft IPA.
@@ -200,6 +197,38 @@ int IPASoftSimple::init(const IPASettings &settings,
 		LOG(IPASoft, Error) << "Don't have gain control";
 		return -EINVAL;
 	}
+
+	const ControlInfo &exposureInfo =
+		sensorControls.find(V4L2_CID_EXPOSURE)->second;
+	const ControlInfo &gainInfo =
+		sensorControls.find(V4L2_CID_ANALOGUE_GAIN)->second;
+	const utils::Duration lineDuration =
+		sensorInfo.minLineLength * 1.0s / sensorInfo.pixelRate;
+	const int32_t minExposureUs = std::max<int32_t>(
+		1, (lineDuration * exposureInfo.min().get<int32_t>()).get<std::micro>());
+	const int32_t maxExposureUs = std::max<int32_t>(
+		minExposureUs,
+		(lineDuration * exposureInfo.max().get<int32_t>()).get<std::micro>());
+	const int32_t defExposureUs = std::clamp<int32_t>(
+		(lineDuration * exposureInfo.def().get<int32_t>()).get<std::micro>(),
+		minExposureUs, maxExposureUs);
+	const float minGain = camHelper_
+				      ? camHelper_->gain(gainInfo.min().get<int32_t>())
+				      : gainInfo.min().get<int32_t>();
+	const float maxGain = camHelper_
+				      ? camHelper_->gain(gainInfo.max().get<int32_t>())
+				      : gainInfo.max().get<int32_t>();
+	const float defGain = camHelper_
+				      ? camHelper_->gain(gainInfo.def().get<int32_t>())
+				      : gainInfo.def().get<int32_t>();
+
+	context_.ctrlMap[&controls::ExposureTime] =
+		ControlInfo(minExposureUs, maxExposureUs, defExposureUs);
+	context_.ctrlMap[&controls::AnalogueGain] =
+		ControlInfo(minGain, maxGain, defGain);
+
+	ControlInfoMap::Map ctrlMap = context_.ctrlMap;
+	*ipaControls = ControlInfoMap(std::move(ctrlMap), controls::controls);
 
 	return 0;
 }
@@ -253,6 +282,14 @@ int IPASoftSimple::configure(const IPAConfigInfo &configInfo)
 		context_.configuration.agc.againMin = againMin;
 		context_.configuration.agc.againMinStep = 1.0;
 	}
+
+	context_.activeState.agc.automatic = true;
+	context_.activeState.agc.manualExposureUs =
+		(context_.configuration.agc.lineDuration * exposureInfo.def().get<int32_t>())
+			.get<std::micro>();
+	context_.activeState.agc.manualGain = camHelper_
+					    ? camHelper_->gain(againDef)
+					    : againDef;
 
 	for (const auto &algo : algorithms()) {
 		int ret = algo->configure(context_, configInfo);
@@ -314,6 +351,12 @@ void IPASoftSimple::processStats(const uint32_t frame,
 	ControlList metadata(controls::controls);
 	for (const auto &algo : algorithms())
 		algo->process(context_, frame, frameContext, stats_, metadata);
+	if (stats_->valid && stats_->focusLuminance) {
+		const uint64_t focusFoM =
+			stats_->focusGradient * 1000000 / stats_->focusLuminance;
+		metadata.set(controls::FocusFoM,
+			     static_cast<int32_t>(std::min<uint64_t>(focusFoM, INT32_MAX)));
+	}
 	metadataReady.emit(frame, metadata);
 
 	/* Sanity check */

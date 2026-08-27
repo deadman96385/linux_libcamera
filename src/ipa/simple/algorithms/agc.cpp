@@ -53,16 +53,38 @@ static constexpr float kExposureSatisfactory = 0.2;
  * This replaces the fixed 10% bang-bang step with a proportional correction
  * that converges smoothly and avoids overshooting near the target.
  */
-static constexpr float kExpProportionalGain = 0.04;
+static constexpr float kExpProportionalGain = 0.15;
 
 /*
  * Maximum multiplicative step per frame, to bound the correction when the
  * scene changes dramatically.
  */
-static constexpr float kExpMaxStep = 0.15;
+static constexpr float kExpMaxStep = 0.50;
 
 Agc::Agc()
 {
+}
+
+int Agc::init(IPAContext &context,
+	      [[maybe_unused]] const ValueNode &tuningData)
+{
+	context.ctrlMap[&controls::AeEnable] = ControlInfo(false, true, true);
+	return 0;
+}
+
+void Agc::queueRequest(IPAContext &context,
+		       [[maybe_unused]] const uint32_t frame,
+		       [[maybe_unused]] IPAFrameContext &frameContext,
+		       const ControlList &requestControls)
+{
+	if (const auto &automatic = requestControls.get(controls::AeEnable))
+		context.activeState.agc.automatic = *automatic;
+
+	if (const auto &exposure = requestControls.get(controls::ExposureTime))
+		context.activeState.agc.manualExposureUs = *exposure;
+
+	if (const auto &gain = requestControls.get(controls::AnalogueGain))
+		context.activeState.agc.manualGain = *gain;
 }
 
 void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, double exposureMSV)
@@ -134,6 +156,7 @@ void Agc::process(IPAContext &context,
 		context.configuration.agc.lineDuration * frameContext.sensor.exposure;
 	metadata.set(controls::ExposureTime, exposureTime.get<std::micro>());
 	metadata.set(controls::AnalogueGain, frameContext.sensor.gain);
+	metadata.set(controls::AeEnable, context.activeState.agc.automatic);
 
 	if (!context.activeState.agc.valid) {
 		/*
@@ -143,6 +166,22 @@ void Agc::process(IPAContext &context,
 		context.activeState.agc.exposure = frameContext.sensor.exposure;
 		context.activeState.agc.again = frameContext.sensor.gain;
 		context.activeState.agc.valid = true;
+	}
+
+	if (!context.activeState.agc.automatic) {
+		const int64_t lineDurationUs = std::max<int64_t>(
+			1, context.configuration.agc.lineDuration.get<std::micro>());
+		frameContext.sensor.exposure = std::clamp<int32_t>(
+			context.activeState.agc.manualExposureUs / lineDurationUs,
+			context.configuration.agc.exposureMin,
+			context.configuration.agc.exposureMax);
+		frameContext.sensor.gain = std::clamp(
+			context.activeState.agc.manualGain,
+			context.configuration.agc.againMin,
+			context.configuration.agc.againMax);
+		context.activeState.agc.exposure = frameContext.sensor.exposure;
+		context.activeState.agc.again = frameContext.sensor.gain;
+		return;
 	}
 
 	if (!stats->valid) {

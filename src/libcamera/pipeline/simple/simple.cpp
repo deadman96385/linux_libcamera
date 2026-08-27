@@ -7,6 +7,7 @@
  */
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <list>
 #include <map>
@@ -22,6 +23,7 @@
 #include <vector>
 
 #include <linux/media-bus-format.h>
+#include <linux/v4l2-controls.h>
 
 #include <libcamera/base/log.h>
 
@@ -34,6 +36,7 @@
 
 #include "libcamera/internal/camera.h"
 #include "libcamera/internal/camera_manager.h"
+#include "libcamera/internal/camera_lens.h"
 #include "libcamera/internal/camera_sensor.h"
 #include "libcamera/internal/camera_sensor_properties.h"
 #include "libcamera/internal/converter.h"
@@ -292,6 +295,7 @@ public:
 			 Transform transform = Transform::Identity);
 	void imageBufferReady(FrameBuffer *buffer);
 	void clearIncompleteRequests();
+	void queueAfControls(const ControlList &controls);
 
 	unsigned int streamIndex(const Stream *stream) const
 	{
@@ -361,6 +365,29 @@ public:
 	std::unique_ptr<SoftwareIsp> swIsp_;
 	SimpleFrames frameInfo_;
 
+	CameraLens *focusLens_;
+	int32_t focusInfinity_;
+	int32_t focusNear_;
+	float focusStepsPerDiopter_;
+	int32_t focusPosition_;
+	int32_t afMode_;
+	int32_t afState_;
+
+	enum class AfPhase {
+		Idle,
+		Coarse,
+		Fine,
+		Monitoring,
+	};
+	AfPhase afPhase_;
+	std::vector<int32_t> afPositions_;
+	size_t afPositionIndex_;
+	unsigned int afSettleSamples_;
+	int32_t afBestPosition_;
+	int32_t afBestFoM_;
+	int32_t afReferenceFoM_;
+	unsigned int afLowFoMSamples_;
+
 private:
 	void tryPipeline(unsigned int code, const Size &size);
 	static std::vector<const MediaPad *> routedSourcePads(MediaPad *sink);
@@ -372,6 +399,9 @@ private:
 	void ispStatsReady(uint32_t frame, uint32_t bufferId);
 	void metadataReady(uint32_t frame, const ControlList &metadata);
 	void setSensorControls(const ControlList &sensorControls);
+	void moveFocusLens(int32_t position);
+	void startAfScan();
+	void processAfStats(const ControlList &metadata, ControlList &requestMetadata);
 };
 
 class SimpleCameraConfiguration : public CameraConfiguration
@@ -469,7 +499,13 @@ private:
 SimpleCameraData::SimpleCameraData(SimplePipelineHandler *pipe,
 				   unsigned int numStreams,
 				   MediaEntity *sensor)
-	: Camera::Private(pipe), streams_(numStreams), rawStream_(nullptr)
+	: Camera::Private(pipe), streams_(numStreams), rawStream_(nullptr),
+	  focusLens_(nullptr), focusInfinity_(0), focusNear_(0),
+	  focusStepsPerDiopter_(1.0f), focusPosition_(0),
+	  afMode_(controls::AfModeManual), afState_(controls::AfStateIdle),
+	  afPhase_(AfPhase::Idle), afPositionIndex_(0), afSettleSamples_(0),
+	  afBestPosition_(0), afBestFoM_(-1), afReferenceFoM_(0),
+	  afLowFoMSamples_(0)
 {
 	/*
 	 * Find the shortest path from the camera sensor to a video capture
@@ -635,6 +671,47 @@ int SimpleCameraData::init()
 		}
 	}
 
+	focusLens_ = sensor_->focusLens();
+	if (focusLens_ && swIsp_) {
+		const ControlInfoMap &lensControls = focusLens_->controls();
+		auto focus = lensControls.find(V4L2_CID_FOCUS_ABSOLUTE);
+		if (focus == lensControls.end()) {
+			focusLens_ = nullptr;
+		} else {
+			const int32_t driverMin = focus->second.min().get<int32_t>();
+			const int32_t driverMax = focus->second.max().get<int32_t>();
+
+			/* OTP AF anchors: infinity=118, 1 metre=212. */
+			if (sensor_->model() == "sr544") {
+				focusInfinity_ = std::clamp(118, driverMin, driverMax);
+				focusStepsPerDiopter_ = 94.0f;
+			} else {
+				focusInfinity_ = driverMin;
+				focusStepsPerDiopter_ =
+					std::max(1.0f, (driverMax - driverMin) / 32.0f);
+			}
+
+			focusNear_ = driverMax;
+			focusPosition_ = focusInfinity_;
+			moveFocusLens(focusPosition_);
+
+			ControlInfoMap::Map cameraControls;
+			for (const auto &[id, info] : controlInfo_)
+				cameraControls[id] = info;
+			cameraControls[&controls::AfMode] =
+				ControlInfo(controls::AfModeValues);
+			cameraControls[&controls::AfTrigger] =
+				ControlInfo(controls::AfTriggerValues);
+			cameraControls[&controls::LensPosition] =
+				ControlInfo(0.0f,
+					    (focusNear_ - focusInfinity_) /
+						    focusStepsPerDiopter_,
+					    0.0f);
+			controlInfo_ = ControlInfoMap(std::move(cameraControls),
+						  controls::controls);
+		}
+	}
+
 	video_ = pipe->video(entities_.back().entity);
 	ASSERT(video_);
 
@@ -763,6 +840,16 @@ void SimpleCameraData::tryPipeline(unsigned int code, const Size &size)
 				config.outputFormats = { pixelFormat };
 				config.outputSizes = config.captureSize;
 			}
+
+			/*
+			 * The SR544 648x488 mode is a 119 fps high-speed mode with
+			 * an 8 ms exposure ceiling.  Keep it available for explicit
+			 * raw/high-speed capture, but don't let the processed-stream
+			 * size heuristic select it for ordinary preview and stills.
+			 */
+			if (sensor_->model() == "sr544" &&
+			    config.captureSize == Size(648, 488))
+				config.outputFormats.clear();
 		} else {
 			config.outputFormats = { pixelFormat };
 			config.outputSizes = config.captureSize;
@@ -1050,9 +1137,150 @@ void SimpleCameraData::metadataReady(uint32_t frame, const ControlList &metadata
 	if (!info)
 		return;
 
-	info->request->_d()->metadata().merge(metadata);
+	ControlList &requestMetadata = info->request->_d()->metadata();
+	requestMetadata.merge(metadata);
+	processAfStats(metadata, requestMetadata);
 	info->metadataProcessed = true;
 	tryCompleteRequest(info->request);
+}
+
+void SimpleCameraData::moveFocusLens(int32_t position)
+{
+	if (!focusLens_)
+		return;
+
+	focusPosition_ = std::clamp(position, focusInfinity_, focusNear_);
+	int ret = focusLens_->setFocusPosition(focusPosition_);
+	if (ret < 0)
+		LOG(SimplePipeline, Error)
+			<< "Failed to set focus position " << focusPosition_
+			<< ": " << strerror(-ret);
+}
+
+void SimpleCameraData::startAfScan()
+{
+	if (!focusLens_)
+		return;
+
+	afPositions_.clear();
+	constexpr unsigned int kCoarseIntervals = 8;
+	for (unsigned int i = 0; i <= kCoarseIntervals; ++i)
+		afPositions_.push_back(focusInfinity_ +
+			(focusNear_ - focusInfinity_) * i / kCoarseIntervals);
+
+	afPhase_ = AfPhase::Coarse;
+	afState_ = controls::AfStateScanning;
+	afPositionIndex_ = 0;
+	afBestPosition_ = focusInfinity_;
+	afBestFoM_ = -1;
+	afReferenceFoM_ = 0;
+	afLowFoMSamples_ = 0;
+	afSettleSamples_ = 1;
+	moveFocusLens(afPositions_.front());
+}
+
+void SimpleCameraData::queueAfControls(const ControlList &requestControls)
+{
+	if (!focusLens_)
+		return;
+
+	if (const auto &mode = requestControls.get(controls::AfMode)) {
+		if (*mode != afMode_) {
+			afMode_ = *mode;
+			afPhase_ = AfPhase::Idle;
+			afState_ = controls::AfStateIdle;
+			if (afMode_ == controls::AfModeContinuous)
+				startAfScan();
+		}
+	}
+
+	if (const auto &trigger = requestControls.get(controls::AfTrigger)) {
+		if (*trigger == controls::AfTriggerStart &&
+		    afMode_ == controls::AfModeAuto) {
+			startAfScan();
+		} else if (*trigger == controls::AfTriggerCancel) {
+			afPhase_ = AfPhase::Idle;
+			afState_ = controls::AfStateIdle;
+		}
+	}
+
+	if (afMode_ == controls::AfModeManual) {
+		if (const auto &position =
+			    requestControls.get(controls::LensPosition)) {
+			const int32_t raw = focusInfinity_ + std::lround(
+				*position * focusStepsPerDiopter_);
+			moveFocusLens(raw);
+		}
+	}
+}
+
+void SimpleCameraData::processAfStats(const ControlList &metadata,
+				      ControlList &requestMetadata)
+{
+	if (!focusLens_)
+		return;
+
+	requestMetadata.set(controls::AfMode, afMode_);
+	requestMetadata.set(controls::AfState, afState_);
+	requestMetadata.set(controls::LensPosition,
+			    (focusPosition_ - focusInfinity_) /
+				    focusStepsPerDiopter_);
+
+	const auto &focusFoM = metadata.get(controls::FocusFoM);
+	if (!focusFoM)
+		return;
+
+	if (afPhase_ == AfPhase::Monitoring) {
+		if (afMode_ == controls::AfModeContinuous && afReferenceFoM_ > 0 &&
+		    *focusFoM < afReferenceFoM_ * 6 / 10) {
+			if (++afLowFoMSamples_ >= 3)
+				startAfScan();
+		} else {
+			afLowFoMSamples_ = 0;
+		}
+		return;
+	}
+
+	if (afPhase_ != AfPhase::Coarse && afPhase_ != AfPhase::Fine)
+		return;
+
+	if (afSettleSamples_) {
+		--afSettleSamples_;
+		return;
+	}
+
+	if (*focusFoM > afBestFoM_) {
+		afBestFoM_ = *focusFoM;
+		afBestPosition_ = afPositions_[afPositionIndex_];
+	}
+
+	if (++afPositionIndex_ < afPositions_.size()) {
+		moveFocusLens(afPositions_[afPositionIndex_]);
+		afSettleSamples_ = 1;
+		return;
+	}
+
+	if (afPhase_ == AfPhase::Coarse) {
+		const int32_t fineMin = std::max(focusInfinity_, afBestPosition_ - 28);
+		const int32_t fineMax = std::min(focusNear_, afBestPosition_ + 28);
+		afPositions_.clear();
+		for (int32_t position = fineMin; position <= fineMax; position += 4)
+			afPositions_.push_back(position);
+		if (afPositions_.back() != fineMax)
+			afPositions_.push_back(fineMax);
+		afPhase_ = AfPhase::Fine;
+		afPositionIndex_ = 0;
+		afBestFoM_ = -1;
+		afSettleSamples_ = 1;
+		moveFocusLens(afPositions_.front());
+		return;
+	}
+
+	moveFocusLens(afBestPosition_);
+	afReferenceFoM_ = std::max(0, afBestFoM_);
+	afState_ = afBestFoM_ > 0 ? controls::AfStateFocused
+					  : controls::AfStateFailed;
+	afPhase_ = AfPhase::Monitoring;
 }
 
 void SimpleCameraData::setSensorControls(const ControlList &sensorControls)
@@ -1648,6 +1876,9 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
 	V4L2Subdevice *frameStartEmitter = data->frameStartEmitter_;
 	int ret;
 
+	if (controls)
+		data->queueAfControls(*controls);
+
 	const MediaPad *pad = acquirePipeline(data);
 	if (pad) {
 		LOG(SimplePipeline, Info)
@@ -1773,6 +2004,7 @@ int SimplePipelineHandler::queueRequestDevice(Camera *camera, Request *request)
 	}
 
 	data->frameInfo_.create(request, metadataRequired);
+	data->queueAfControls(request->controls());
 	if (data->useConversion_) {
 		data->conversionQueue_.push({ request, std::move(buffers) });
 		if (data->swIsp_)
