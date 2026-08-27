@@ -19,7 +19,11 @@ public:
 	Awb() = default;
 	~Awb() = default;
 
+	int init(IPAContext &context, const ValueNode &tuningData) override;
 	int configure(IPAContext &context, const IPAConfigInfo &configInfo) override;
+	void queueRequest(IPAContext &context, const uint32_t frame,
+			  IPAFrameContext &frameContext,
+			  const ControlList &controls) override;
 	void prepare(IPAContext &context,
 		     const uint32_t frame,
 		     IPAFrameContext &frameContext,
@@ -29,6 +33,10 @@ public:
 		     IPAFrameContext &frameContext,
 		     const SwIspStats *stats,
 		     ControlList &metadata) override;
+
+private:
+	RGB<float> initialGains_{ { 1.0f, 1.0f, 1.0f } };
+	unsigned int initialTemperatureK_ = 5000;
 };
 
 } /* namespace ipa::soft::algorithms */

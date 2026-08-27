@@ -54,6 +54,7 @@ struct IPAActiveState {
 	struct {
 		RGB<float> gains;
 		unsigned int temperatureK;
+		bool automatic;
 	} awb;
 
 	Matrix<float, 3, 3> combinedMatrix;

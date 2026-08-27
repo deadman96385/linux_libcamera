@@ -9,6 +9,7 @@
 
 #include <numeric>
 #include <stdint.h>
+#include <vector>
 
 #include <libcamera/base/log.h>
 
@@ -23,13 +24,50 @@ LOG_DEFINE_CATEGORY(IPASoftAwb)
 
 namespace ipa::soft::algorithms {
 
+int Awb::init(IPAContext &context, const ValueNode &tuningData)
+{
+	context.ctrlMap[&controls::AwbEnable] = ControlInfo(false, true, true);
+	context.ctrlMap[&controls::ColourGains] = ControlInfo(0.0f, 8.0f);
+
+	const ValueNode &sets = tuningData["colourGains"];
+	if (sets.isList() && sets.size()) {
+		const ValueNode &set = sets[0];
+		const std::vector<float> gains =
+			set["gains"].get<std::vector<float>>().value_or(
+				std::vector<float>{});
+		if (gains.size() == 2) {
+			initialGains_ = { { gains[0], 1.0f, gains[1] } };
+			initialTemperatureK_ = set["ct"].get<unsigned int>(5000);
+		}
+	}
+
+	return 0;
+}
+
 int Awb::configure(IPAContext &context,
 		   [[maybe_unused]] const IPAConfigInfo &configInfo)
 {
 	auto &gains = context.activeState.awb.gains;
-	gains = { { 1.0, 1.0, 1.0 } };
+	gains = initialGains_;
+	context.activeState.awb.temperatureK = initialTemperatureK_;
+	context.activeState.awb.automatic = true;
 
 	return 0;
+}
+
+void Awb::queueRequest(IPAContext &context,
+		       [[maybe_unused]] const uint32_t frame,
+		       [[maybe_unused]] IPAFrameContext &frameContext,
+		       const ControlList &requestControls)
+{
+	if (const auto &automatic = requestControls.get(controls::AwbEnable))
+		context.activeState.awb.automatic = *automatic;
+
+	if (!context.activeState.awb.automatic) {
+		if (const auto &gains = requestControls.get(controls::ColourGains))
+			context.activeState.awb.gains =
+				{ { (*gains)[0], 1.0f, (*gains)[1] } };
+	}
 }
 
 void Awb::prepare(IPAContext &context,
@@ -54,8 +92,11 @@ void Awb::process(IPAContext &context,
 
 	metadata.set(controls::ColourGains, { frameContext.gains.r(),
 					      frameContext.gains.b() });
+	metadata.set(controls::AwbEnable, context.activeState.awb.automatic);
+	metadata.set(controls::ColourTemperature,
+		     context.activeState.awb.temperatureK);
 
-	if (!stats->valid)
+	if (!stats->valid || !context.activeState.awb.automatic)
 		return;
 
 	/*
