@@ -9,7 +9,7 @@
 
 namespace libcamera {
 
-namespace ipa::softisp::algorithms {
+namespace ipa::soft::algorithms {
 
 LOG_DEFINE_CATEGORY(IPASoftLsc)
 
@@ -98,6 +98,6 @@ void Lsc::process([[maybe_unused]] IPAContext &context,
 
 REGISTER_IPA_ALGORITHM(Lsc, "Lsc")
 
-} /* namespace ipa::softisp::algorithms */
+} /* namespace ipa::soft::algorithms */
 
 } /* namespace libcamera */

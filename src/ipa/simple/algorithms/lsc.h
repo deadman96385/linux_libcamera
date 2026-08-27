@@ -15,7 +15,7 @@
 
 namespace libcamera {
 
-namespace ipa::softisp::algorithms {
+namespace ipa::soft::algorithms {
 
 class Lsc : public Algorithm
 {
@@ -46,6 +46,6 @@ private:
 	unsigned int lastAppliedCt_ = 0;
 };
 
-} /* namespace ipa::softisp::algorithms */
+} /* namespace ipa::soft::algorithms */
 
 } /* namespace libcamera */
