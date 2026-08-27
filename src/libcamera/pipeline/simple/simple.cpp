@@ -745,7 +745,17 @@ void SimpleCameraData::tryPipeline(unsigned int code, const Size &size)
 			config.outputFormats = swIsp_->formats(pixelFormat);
 			config.outputSizes = swIsp_->sizes(pixelFormat, format.size);
 			if (config.outputFormats.empty()) {
-				continue;
+				/*
+				 * Sensors with an integrated ISP output processed YUV
+				 * directly. The software ISP only accepts Bayer input,
+				 * so keep those processed formats on the direct path.
+				 */
+				if (PixelFormatInfo::info(pixelFormat).colourEncoding ==
+				    PixelFormatInfo::ColourEncodingRAW)
+					continue;
+
+				config.outputFormats = { pixelFormat };
+				config.outputSizes = config.captureSize;
 			}
 		} else {
 			config.outputFormats = { pixelFormat };
