@@ -204,13 +204,19 @@ int IPASoftSimple::init(const IPASettings &settings,
 		sensorControls.find(V4L2_CID_ANALOGUE_GAIN)->second;
 	const utils::Duration lineDuration =
 		sensorInfo.minLineLength * 1.0s / sensorInfo.pixelRate;
+	const auto exposureUs = [lineDuration](int32_t lines) {
+		return static_cast<int32_t>(
+			std::chrono::duration_cast<std::chrono::microseconds>(
+				lineDuration * lines)
+				.count());
+	};
 	const int32_t minExposureUs = std::max<int32_t>(
-		1, (lineDuration * exposureInfo.min().get<int32_t>()).get<std::micro>());
+		1, exposureUs(exposureInfo.min().get<int32_t>()));
 	const int32_t maxExposureUs = std::max<int32_t>(
 		minExposureUs,
-		(lineDuration * exposureInfo.max().get<int32_t>()).get<std::micro>());
+		exposureUs(exposureInfo.max().get<int32_t>()));
 	const int32_t defExposureUs = std::clamp<int32_t>(
-		(lineDuration * exposureInfo.def().get<int32_t>()).get<std::micro>(),
+		exposureUs(exposureInfo.def().get<int32_t>()),
 		minExposureUs, maxExposureUs);
 	const float minGain = camHelper_
 				      ? camHelper_->gain(gainInfo.min().get<int32_t>())
@@ -284,9 +290,11 @@ int IPASoftSimple::configure(const IPAConfigInfo &configInfo)
 	}
 
 	context_.activeState.agc.automatic = true;
-	context_.activeState.agc.manualExposureUs =
-		(context_.configuration.agc.lineDuration * exposureInfo.def().get<int32_t>())
-			.get<std::micro>();
+	context_.activeState.agc.manualExposureUs = static_cast<int32_t>(
+		std::chrono::duration_cast<std::chrono::microseconds>(
+			context_.configuration.agc.lineDuration *
+			exposureInfo.def().get<int32_t>())
+			.count());
 	context_.activeState.agc.manualGain = camHelper_
 					    ? camHelper_->gain(againDef)
 					    : againDef;
