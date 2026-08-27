@@ -7,11 +7,13 @@
 
 #include "main_window.h"
 
+#include <array>
 #include <assert.h>
 #include <iomanip>
 #include <string>
 
 #include <libcamera/camera_manager.h>
+#include <libcamera/property_ids.h>
 #include <libcamera/version.h>
 
 #include <QCoreApplication>
@@ -26,6 +28,8 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QtDebug>
+
+#include <libcamera/control_ids.h>
 
 #include "../common/dng_writer.h"
 #include "../common/image.h"
@@ -653,6 +657,14 @@ void MainWindow::saveRaw(FrameBuffer *buffer,
 			 const ControlList &metadata)
 {
 #ifdef HAVE_TIFF
+	ControlList dngMetadata(metadata);
+	if (!dngMetadata.contains(controls::SensorBlackLevels.id()) &&
+	    camera_->properties().get(properties::Model).value_or("") == "sr544") {
+		/* 4 RAW10 DN represented in the control's normalized 16-bit range. */
+		const std::array<int32_t, 4> blackLevels{ 256, 256, 256, 256 };
+		dngMetadata.set(controls::SensorBlackLevels, blackLevels);
+	}
+
 	QString defaultPath = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
 	QString filename = QFileDialog::getSaveFileName(this, "Save DNG", defaultPath,
 							"DNG Files (*.dng)");
@@ -660,7 +672,7 @@ void MainWindow::saveRaw(FrameBuffer *buffer,
 	if (!filename.isEmpty()) {
 		uint8_t *memory = mappedBuffers_[buffer]->data(0).data();
 		DNGWriter::write(filename.toStdString().c_str(), camera_.get(),
-				 rawStream_->configuration(), metadata, buffer,
+				 rawStream_->configuration(), dngMetadata, buffer,
 				 memory);
 	}
 #endif

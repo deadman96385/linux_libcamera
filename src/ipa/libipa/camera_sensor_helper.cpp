@@ -832,6 +832,8 @@ class CameraSensorHelperSr544 : public CameraSensorHelper
 public:
 	CameraSensorHelperSr544()
 	{
+		/* Samsung's stock chromatix uses a 4 DN pedestal at 10 bits. */
+		blackLevel_ = 256;
 		/* Samsung's stock library encodes gain as 1 + code / 16. */
 		gain_ = AnalogueGainLinear{ 1, 16, 0, 16 };
 	}
