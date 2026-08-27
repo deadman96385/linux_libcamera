@@ -502,7 +502,7 @@ SimpleCameraData::SimpleCameraData(SimplePipelineHandler *pipe,
 	: Camera::Private(pipe), streams_(numStreams), rawStream_(nullptr),
 	  focusLens_(nullptr), focusInfinity_(0), focusNear_(0),
 	  focusStepsPerDiopter_(1.0f), focusPosition_(0),
-	  afMode_(controls::AfModeManual), afState_(controls::AfStateIdle),
+	  afMode_(controls::AfModeContinuous), afState_(controls::AfStateIdle),
 	  afPhase_(AfPhase::Idle), afPositionIndex_(0), afSettleSamples_(0),
 	  afBestPosition_(0), afBestFoM_(-1), afReferenceFoM_(0),
 	  afLowFoMSamples_(0)
@@ -709,6 +709,7 @@ int SimpleCameraData::init()
 					    0.0f);
 			controlInfo_ = ControlInfoMap(std::move(cameraControls),
 						  controls::controls);
+			startAfScan();
 		}
 	}
 
