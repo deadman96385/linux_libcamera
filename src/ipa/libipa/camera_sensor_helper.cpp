@@ -827,6 +827,17 @@ public:
 };
 REGISTER_CAMERA_SENSOR_HELPER("ov13858", CameraSensorHelperOv13858)
 
+class CameraSensorHelperSr544 : public CameraSensorHelper
+{
+public:
+	CameraSensorHelperSr544()
+	{
+		/* Samsung's stock library encodes gain as 1 + code / 16. */
+		gain_ = AnalogueGainLinear{ 1, 16, 0, 16 };
+	}
+};
+REGISTER_CAMERA_SENSOR_HELPER("sr544", CameraSensorHelperSr544)
+
 class CameraSensorHelperVd55g1 : public CameraSensorHelper
 {
 public:
