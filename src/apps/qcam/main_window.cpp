@@ -364,8 +364,9 @@ int MainWindow::startCapture()
 		roles.push_back(StreamRole::Viewfinder);
 		break;
 	case 1:
-		if (roles[0] != StreamRole::Viewfinder) {
-			qWarning() << "Only viewfinder supported for single stream";
+		if (roles[0] != StreamRole::Viewfinder &&
+		    roles[0] != StreamRole::Raw) {
+			qWarning() << "Only viewfinder or raw supported for single stream";
 			return -EINVAL;
 		}
 		break;
@@ -427,6 +428,8 @@ int MainWindow::startCapture()
 	vfStream_ = config_->at(0).stream();
 	if (config_->size() == 2)
 		rawStream_ = config_->at(1).stream();
+	else if (roles[0] == StreamRole::Raw)
+		rawStream_ = vfStream_;
 	else
 		rawStream_ = nullptr;
 
@@ -447,7 +450,7 @@ int MainWindow::startCapture()
 
 	/* Configure the raw capture button. */
 	if (saveRaw_)
-		saveRaw_->setEnabled(config_->size() == 2);
+		saveRaw_->setEnabled(rawStream_ != nullptr);
 
 	/* Allocate and map buffers. */
 	allocator_ = std::make_unique<FrameBufferAllocator>(camera_);
@@ -646,8 +649,8 @@ void MainWindow::captureRaw()
 	captureRaw_ = true;
 }
 
-void MainWindow::processRaw(FrameBuffer *buffer,
-			    [[maybe_unused]] const ControlList &metadata)
+void MainWindow::saveRaw(FrameBuffer *buffer,
+			 const ControlList &metadata)
 {
 #ifdef HAVE_TIFF
 	QString defaultPath = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
@@ -661,6 +664,12 @@ void MainWindow::processRaw(FrameBuffer *buffer,
 				 memory);
 	}
 #endif
+}
+
+void MainWindow::processRaw(FrameBuffer *buffer,
+			    const ControlList &metadata)
+{
+	saveRaw(buffer, metadata);
 
 	{
 		QMutexLocker locker(&mutex_);
@@ -707,10 +716,16 @@ void MainWindow::processCapture()
 	}
 
 	/* Process buffers. */
-	if (request->buffers().count(vfStream_))
-		processViewfinder(request->buffers().at(vfStream_));
+	if (request->buffers().count(vfStream_)) {
+		FrameBuffer *buffer = request->buffers().at(vfStream_);
+		if (vfStream_ == rawStream_ && captureRaw_) {
+			captureRaw_ = false;
+			saveRaw(buffer, request->metadata());
+		}
+		processViewfinder(buffer);
+	}
 
-	if (request->buffers().count(rawStream_))
+	if (rawStream_ != vfStream_ && request->buffers().count(rawStream_))
 		processRaw(request->buffers().at(rawStream_), request->metadata());
 
 	request->reuse();
@@ -755,7 +770,7 @@ void MainWindow::renderComplete(FrameBuffer *buffer)
 
 	request->addBuffer(vfStream_, buffer);
 
-	if (captureRaw_) {
+	if (captureRaw_ && rawStream_ != vfStream_) {
 		FrameBuffer *rawBuffer = nullptr;
 
 		{

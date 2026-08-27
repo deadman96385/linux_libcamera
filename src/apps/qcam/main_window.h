@@ -65,6 +65,8 @@ private Q_SLOTS:
 
 	void saveImageAs();
 	void captureRaw();
+	void saveRaw(libcamera::FrameBuffer *buffer,
+		     const libcamera::ControlList &metadata);
 	void processRaw(libcamera::FrameBuffer *buffer,
 			const libcamera::ControlList &metadata);
 
