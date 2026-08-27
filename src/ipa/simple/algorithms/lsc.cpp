@@ -5,6 +5,9 @@
 
 #include "lsc.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include <libcamera/base/log.h>
 
 namespace libcamera {
@@ -15,87 +18,56 @@ LOG_DEFINE_CATEGORY(IPASoftLsc)
 
 int Lsc::init(IPAContext &context, const ValueNode &tuningData)
 {
-	static constexpr unsigned int kGridSize = DebayerParams::kLscGridSize;
-
-	for (unsigned int i = 0; i < kGridSize; i++)
-		gridPos_.push_back(static_cast<double>(i) / (kGridSize - 1));
-
-	int ret = lscAlgo_.init(tuningData, context.ctrlMap,
-			     { .keys = { "r", "g", "b" },
-			       .numHSamples = kGridSize,
-			       .numVSamples = kGridSize,
-			       .sensorSize = context.sensorInfo.activeAreaSize });
-	if (ret)
-		return ret;
+	int retR = lscR_.readYaml(tuningData["sets"], "ct", "r");
+	int retG = lscG_.readYaml(tuningData["sets"], "ct", "g");
+	int retB = lscB_.readYaml(tuningData["sets"], "ct", "b");
+	if (retR < 0 || retG < 0 || retB < 0) {
+		LOG(IPASoftLsc, Error)
+			<< "Failed to parse LSC tables from tuning file";
+		return -EINVAL;
+	}
 
 	context.lscEnabled = true;
 
 	return 0;
 }
 
-int Lsc::configure(IPAContext &context,
+int Lsc::configure([[maybe_unused]] IPAContext &context,
 		   [[maybe_unused]] const IPAConfigInfo &configInfo)
 {
-	return lscAlgo_.configure(context.activeState.lsc,
-				  context.sensorInfo.analogCrop,
-				  gridPos_, gridPos_);
+	return 0;
 }
 
-void Lsc::prepare([[maybe_unused]] IPAContext &context,
+void Lsc::prepare(IPAContext &context,
 		  [[maybe_unused]] const uint32_t frame,
-		  IPAFrameContext &frameContext,
+		  [[maybe_unused]] IPAFrameContext &frameContext,
 		  DebayerParams *params)
 {
-	unsigned int ct = frameContext.awb.colourTemperature;
+	unsigned int ct = context.activeState.awb.temperatureK;
+	if (ct == 0)
+		ct = 5000;
+
 	constexpr unsigned int minTemperatureChange = 100;
-
-	if (!frameContext.lsc.enabled) {
-		if (lastAppliedCt_ != 0) {
-			params->lscLut = DebayerParams::identityLscLut;
-			params->lscLutVersion++;
-			lastAppliedCt_ = 0;
-		}
-		return;
-	}
-
-	if (utils::abs_diff(ct, lastAppliedCt_) < minTemperatureChange)
+	if (params->lscLutVersion != 0 &&
+	    utils::abs_diff(ct, lastAppliedCt_) < minTemperatureChange)
 		return;
 
-	const auto &set = lscAlgo_.interpolateComponents(ct);
-
-	const auto &red = set.at("r");
-	const auto &green = set.at("g");
-	const auto &blue = set.at("b");
+	const LscMatrix &red = lscR_.getInterpolated(ct);
+	const LscMatrix &green = lscG_.getInterpolated(ct);
+	const LscMatrix &blue = lscB_.getInterpolated(ct);
 
 	DebayerParams::LscLookupTable &lut = params->lscLut;
 	constexpr unsigned int gridSize = DebayerParams::kLscGridSize;
 	for (unsigned int i = 0, j = 0; i < gridSize * gridSize; i++) {
-		lut[j++] = red[i];
-		lut[j++] = green[i];
-		lut[j++] = blue[i];
+		lut[j++] = std::clamp(std::lround(red.data()[i]), 0l, 255l);
+		lut[j++] = std::clamp(std::lround(green.data()[i]), 0l, 255l);
+		lut[j++] = std::clamp(std::lround(blue.data()[i]), 0l, 255l);
 		lut[j++] = 0; /* padding */
 	}
 	params->lscLutVersion++;
 
 	lastAppliedCt_ = ct;
 }
-
-void Lsc::queueRequest(IPAContext &context, [[maybe_unused]] const uint32_t frame,
-		       IPAFrameContext &frameContext, const ControlList &controls)
-{
-	lscAlgo_.queueRequest(context.activeState.lsc, frameContext.lsc,
-			      controls);
-}
-
-void Lsc::process([[maybe_unused]] IPAContext &context,
-		  [[maybe_unused]] const uint32_t frame,
-		  IPAFrameContext &frameContext,
-		  [[maybe_unused]] const SwIspStats *stats,
-		  ControlList &metadata)
-{
-	lscAlgo_.process(frameContext.lsc, metadata);
-}
-
 REGISTER_IPA_ALGORITHM(Lsc, "Lsc")
 
 } /* namespace ipa::soft::algorithms */

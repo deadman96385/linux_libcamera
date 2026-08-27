@@ -5,13 +5,11 @@
 
 #pragma once
 
+#include "libcamera/internal/matrix.h"
+
 #include <libipa/interpolator.h>
 
-#include "libipa/fixedpoint.h"
-#include "libipa/lsc.h"
-
 #include "algorithm.h"
-#include "ipa_context.h"
 
 namespace libcamera {
 
@@ -26,23 +24,18 @@ public:
 	int init(IPAContext &context, const ValueNode &tuningData) override;
 	int configure(IPAContext &context,
 		      const IPAConfigInfo &configInfo) override;
-	void queueRequest(IPAContext &context, [[maybe_unused]] const uint32_t frame,
-			  IPAFrameContext &frameContext, const ControlList &controls) override;
 	void prepare(IPAContext &context,
 		     const uint32_t frame,
 		     IPAFrameContext &frameContext,
 		     DebayerParams *params) override;
-	void process([[maybe_unused]] IPAContext &context,
-		     [[maybe_unused]] const uint32_t frame,
-		     IPAFrameContext &frameContext,
-		     [[maybe_unused]] const SwIspStats *stats,
-		     ControlList &metadata) override;
 
 private:
-	LscAlgorithm<UQ<2, 6>> lscAlgo_;
+	using LscMatrix = Matrix<float, DebayerParams::kLscGridSize,
+				 DebayerParams::kLscGridSize>;
 
-	std::vector<double> gridPos_;
-
+	Interpolator<LscMatrix> lscR_;
+	Interpolator<LscMatrix> lscG_;
+	Interpolator<LscMatrix> lscB_;
 	unsigned int lastAppliedCt_ = 0;
 };
 
