@@ -2,8 +2,9 @@
 
 softisp_ipa_algorithms = files([
     'adjust.cpp',
-    'awb.cpp',
     'agc.cpp',
+    'af.cpp',
+    'awb.cpp',
     'blc.cpp',
     'ccm.cpp',
     'lsc.cpp',

@@ -22,6 +22,7 @@
 #include <libipa/camera_sensor_helper.h>
 #include <libipa/ccm.h>
 #include <libipa/fc_queue.h>
+
 #include "libipa/lsc.h"
 
 #include "core_ipa_interface.h"
@@ -41,6 +42,13 @@ struct IPAActiveState {
 	ipa::awb::ActiveState awb;
 	ipa::ccm::ActiveState ccm;
 	ipa::agc::ActiveState agc;
+	struct {
+		int32_t mode;
+		int32_t state;
+		int32_t pauseState;
+		int32_t lensPosition;
+		bool lensUpdate;
+	} af;
 
 	struct {
 		uint8_t level;
@@ -84,6 +92,7 @@ struct IPAContext {
 
 	IPACameraSensorInfo sensorInfo;
 	ControlInfoMap sensorControls;
+	ControlInfoMap lensControls;
 	std::unique_ptr<CameraSensorHelper> camHelper;
 	IPASessionConfiguration configuration;
 	IPAActiveState activeState;

@@ -33,6 +33,7 @@
 #include <libcamera/stream.h>
 
 #include "libcamera/internal/camera.h"
+#include "libcamera/internal/camera_lens.h"
 #include "libcamera/internal/camera_manager.h"
 #include "libcamera/internal/camera_sensor.h"
 #include "libcamera/internal/camera_sensor_properties.h"
@@ -372,6 +373,7 @@ private:
 	void ispStatsReady(uint32_t frame, uint32_t bufferId);
 	void metadataReady(uint32_t frame, const ControlList &metadata);
 	void setSensorControls(const ControlList &sensorControls);
+	void setLensControls(const ControlList &lensControls);
 };
 
 class SimpleCameraConfiguration : public CameraConfiguration
@@ -636,6 +638,7 @@ int SimpleCameraData::init()
 			swIsp_->ispStatsReady.connect(this, &SimpleCameraData::ispStatsReady);
 			swIsp_->metadataReady.connect(this, &SimpleCameraData::metadataReady);
 			swIsp_->setSensorControls.connect(this, &SimpleCameraData::setSensorControls);
+			swIsp_->setLensControls.connect(this, &SimpleCameraData::setLensControls);
 		}
 	}
 
@@ -1066,6 +1069,19 @@ void SimpleCameraData::setSensorControls(const ControlList &sensorControls)
 		ControlList ctrls(sensorControls);
 		sensor_->setControls(&ctrls);
 	}
+}
+
+void SimpleCameraData::setLensControls(const ControlList &lensControls)
+{
+	CameraLens *lens = sensor_->focusLens();
+	if (!lens || !lensControls.contains(V4L2_CID_FOCUS_ABSOLUTE))
+		return;
+
+	const ControlValue &focus = lensControls.get(V4L2_CID_FOCUS_ABSOLUTE);
+	int ret = lens->setFocusPosition(focus.get<int32_t>());
+	if (ret < 0)
+		LOG(SimplePipeline, Error)
+			<< "Failed to set focus position: " << strerror(-ret);
 }
 
 /* Retrieve all source pads connected to a sink pad through active routes. */

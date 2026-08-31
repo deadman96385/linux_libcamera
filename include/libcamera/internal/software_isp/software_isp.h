@@ -47,7 +47,7 @@ LOG_DECLARE_CATEGORY(SoftwareIsp)
 class SoftwareIsp : public Object
 {
 public:
-	SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
+	SoftwareIsp(PipelineHandler *pipe, CameraSensor *sensor,
 		    ControlInfoMap *ipaControls);
 	~SoftwareIsp();
 
@@ -88,6 +88,7 @@ public:
 	Signal<uint32_t, uint32_t> ispStatsReady;
 	Signal<uint32_t, const ControlList &> metadataReady;
 	Signal<const ControlList &> setSensorControls;
+	Signal<const ControlList &> setLensControls;
 
 private:
 	void saveIspParams(uint32_t frame);

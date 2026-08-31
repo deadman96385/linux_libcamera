@@ -24,6 +24,7 @@
 #include <libcamera/stream.h>
 
 #include "libcamera/internal/bayer_format.h"
+#include "libcamera/internal/camera_lens.h"
 #include "libcamera/internal/framebuffer.h"
 #include "libcamera/internal/software_isp/debayer_params.h"
 
@@ -73,12 +74,17 @@ LOG_DEFINE_CATEGORY(SoftwareIsp)
  */
 
 /**
+ * \var SoftwareIsp::setLensControls
+ * \brief A signal emitted when controls for the focus lens are ready
+ */
+
+/**
  * \brief Constructs SoftwareIsp object
  * \param[in] pipe The pipeline handler in use
  * \param[in] sensor Pointer to the CameraSensor instance owned by the pipeline handler
  * \param[out] ipaControls The IPA controls to update
  */
-SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
+SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, CameraSensor *sensor,
 			 ControlInfoMap *ipaControls)
 	: ispWorkerThread_("SWIspWorker"),
 	  dmaHeap_(DmaBufAllocator::DmaBufAllocatorFlag::CmaHeap |
@@ -157,11 +163,16 @@ SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
 		return;
 	}
 
+	ControlInfoMap lensControls;
+	if (CameraLens *lens = sensor->focusLens())
+		lensControls = lens->controls();
+
 	ret = ipa_->init(IPASettings{ ipaTuningFile, sensor->model() },
 			 debayer_->getStatsFD(),
 			 sharedParams_.fd(),
 			 sensorInfo,
 			 sensor->controls(),
+			 lensControls,
 			 ipaControls,
 			 &ccmEnabled_,
 			 &lscEnabled_);
@@ -177,6 +188,10 @@ SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
 					    metadataReady.emit(frame, metadata);
 				    });
 	ipa_->setSensorControls.connect(this, &SoftwareIsp::setSensorCtrls);
+	ipa_->setLensControls.connect(this,
+				      [this](const ControlList &controls) {
+					      setLensControls.emit(controls);
+				      });
 
 	debayer_->moveToThread(&ispWorkerThread_);
 }

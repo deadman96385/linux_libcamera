@@ -57,6 +57,7 @@ public:
 		 const SharedFD &fdParams,
 		 const IPACameraSensorInfo &sensorInfo,
 		 const ControlInfoMap &sensorControls,
+		 const ControlInfoMap &lensControls,
 		 ControlInfoMap *ipaControls,
 		 bool *ccmEnabled,
 		 bool *lscEnabled) override;
@@ -75,6 +76,7 @@ protected:
 	std::string logPrefix() const override;
 
 private:
+	void applyLensControls();
 	void updateExposure(double exposureMSV);
 
 	DebayerParams *params_;
@@ -97,6 +99,7 @@ int IPASoftIsp::init(const IPASettings &settings,
 		     const SharedFD &fdParams,
 		     const IPACameraSensorInfo &sensorInfo,
 		     const ControlInfoMap &sensorControls,
+		     const ControlInfoMap &lensControls,
 		     ControlInfoMap *ipaControls,
 		     bool *ccmEnabled,
 		     bool *lscEnabled)
@@ -110,6 +113,7 @@ int IPASoftIsp::init(const IPASettings &settings,
 
 	context_.sensorInfo = sensorInfo;
 	context_.sensorControls = sensorControls;
+	context_.lensControls = lensControls;
 
 	/* Load the tuning data file */
 	File file(settings.configurationFile);
@@ -203,6 +207,7 @@ int IPASoftIsp::configure(const IPAConfigInfo &configInfo, ControlInfoMap *ipaCo
 		if (ret)
 			return ret;
 	}
+	applyLensControls();
 
 	*ipaControls = { ControlInfoMap::Map(context_.ctrlMap), controls::controls };
 
@@ -225,6 +230,8 @@ void IPASoftIsp::queueRequest(const uint32_t frame, const ControlList &controls)
 
 	for (const auto &algo : algorithms())
 		algo->queueRequest(context_, frame, frameContext, controls);
+
+	applyLensControls();
 }
 
 void IPASoftIsp::computeParams(const uint32_t frame)
@@ -251,12 +258,25 @@ void IPASoftIsp::processStats(const uint32_t frame,
 	ControlList metadata(controls::controls);
 	for (const auto &algo : algorithms())
 		algo->process(context_, frame, frameContext, stats_, metadata);
+	applyLensControls();
 	metadataReady.emit(frame, metadata);
 
 	ControlList ctrls(context_.sensorControls);
 	agc::prepareControls(ctrls, context_.camHelper.get(),
 			     frameContext.agc.exposure, frameContext.agc.gain);
 	setSensorControls.emit(ctrls);
+}
+
+void IPASoftIsp::applyLensControls()
+{
+	if (!context_.activeState.af.lensUpdate || context_.lensControls.empty())
+		return;
+
+	ControlList controls(context_.lensControls);
+	controls.set(V4L2_CID_FOCUS_ABSOLUTE,
+		     context_.activeState.af.lensPosition);
+	setLensControls.emit(controls);
+	context_.activeState.af.lensUpdate = false;
 }
 
 std::string IPASoftIsp::logPrefix() const

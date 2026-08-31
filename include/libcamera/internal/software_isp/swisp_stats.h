@@ -43,6 +43,14 @@ struct SwIspStats {
 	 * \brief A histogram of luminance values of all the sampled pixels
 	 */
 	Histogram yHistogram;
+	/**
+	 * \brief Sum of horizontal luminance gradients
+	 */
+	uint64_t focusGradient;
+	/**
+	 * \brief Sum of the luminance samples used for focusGradient
+	 */
+	uint64_t focusLuminance;
 };
 
 } /* namespace libcamera */
