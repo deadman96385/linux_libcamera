@@ -876,6 +876,20 @@ public:
 };
 REGISTER_CAMERA_SENSOR_HELPER("ov13858", CameraSensorHelperOv13858)
 
+class CameraSensorHelperSr544 : public CameraSensorHelper
+{
+public:
+	CameraSensorHelperSr544()
+	{
+		/* The sensor has a 4 DN pedestal in its 10-bit output. */
+		blackLevel_ = 256;
+
+		/* The analogue gain is encoded as gain = 1 + code / 16. */
+		gain_ = AnalogueGainLinear{ 1, 16, 0, 16 };
+	}
+};
+REGISTER_CAMERA_SENSOR_HELPER("sr544", CameraSensorHelperSr544)
+
 class CameraSensorHelperVd55g1 : public CameraSensorHelper
 {
 public:
